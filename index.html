@@ -835,6 +835,8 @@ function onFrame(data){
 /* ---------- WebSocket (Euler Stream) ---------- */
 let ws=null, manualClose=true, retryTimer=null, retryN=0, ignoreUntil=0, wsOpen=false;
 let liveWatchdog=null, liveConfirmed=false, currentUser='';
+let forceReconnectTimer=null;
+const FORCE_RECONNECT_MS = 10*60*1000; // hər 10 dəqiqədən bir planlı yenidən qoşulma (hədiyyələrin "yeyilməsinin" qarşısını almaq üçün)
 const CLOSE_MSG={
   4400:['err','Yanlış parametr (istifadəçi adını yoxla).',false],
   4401:['err','API açarı yanlışdır və ya etibarsızdır.',false],
@@ -868,6 +870,18 @@ function connect(){
   killSocket(); manualClose=false; retryN=0;
   openSocket(user,key);
 }
+function scheduleForceReconnect(){
+  clearTimeout(forceReconnectTimer);
+  forceReconnectTimer=setTimeout(forceReconnect,FORCE_RECONNECT_MS);
+}
+function forceReconnect(){
+  if(manualClose || !currentUser) return;
+  const user=currentUser, key=$('#inKey').value.trim()||S.apiKey;
+  log('sys','🔄 Planlı yenidən qoşulma (hər 10 dəqiqədən bir) — hədiyyələrin itməsinin qarşısını almaq üçün.');
+  setWs('wait','🔄 Planlı yenidən qoşulma edilir…');
+  killSocket();
+  openSocket(user,key);
+}
 function openSocket(user,key){
   clearTimeout(retryTimer); retryTimer=null;
   currentUser=user;
@@ -882,6 +896,7 @@ function openSocket(user,key){
     wsOpen=true; retryN=0; ignoreUntil=Date.now()+1500;
     diag.frames=diag.ok=diag.bad=diag.bin=0; diag.types={};
     liveConfirmed=false; clearTimeout(liveWatchdog);
+    scheduleForceReconnect();
     setWs('wait','🔌 Serverə qoşuldu, @'+user+' yayımının aktiv olduğu yoxlanılır…');
     log('sys','🔌 Serverə qoşuldu, <b>@'+esc(user)+'</b> yayımı gözlənilir…');
     liveWatchdog=setTimeout(function(){
@@ -895,7 +910,7 @@ function openSocket(user,key){
   sock.onerror=function(){ /* təfərrüat onclose-da */ };
   sock.onclose=function(ev){
     if(ws!==sock) return;
-    ws=null; wsOpen=false; clearTimeout(liveWatchdog);
+    ws=null; wsOpen=false; clearTimeout(liveWatchdog); clearTimeout(forceReconnectTimer);
     if(manualClose){ setWs('off','Bağlantı ayrıldı.'); return; }
     const info=CLOSE_MSG[ev.code];
     if(info){
@@ -917,7 +932,7 @@ function scheduleRetry(user,key,ms){
   $('#btnDisconnect').disabled=false;
 }
 function killSocket(){
-  clearTimeout(retryTimer); retryTimer=null; clearTimeout(liveWatchdog);
+  clearTimeout(retryTimer); retryTimer=null; clearTimeout(liveWatchdog); clearTimeout(forceReconnectTimer);
   if(ws){ const s=ws; ws=null; try{ s.onclose=null; s.onmessage=null; s.onerror=null; s.close(1000); }catch(e){} }
   wsOpen=false;
 }
